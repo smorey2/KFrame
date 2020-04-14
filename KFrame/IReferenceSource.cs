@@ -1,11 +1,14 @@
-﻿using System.Collections.Generic;
-
-namespace KFrame
+﻿namespace KFrame
 {
+    /// <summary>
+    /// Interface IReferenceSource
+    /// </summary>
     public interface IReferenceSource
     {
-        string Name { get; }
-        string Param { get; }
-        IEnumerable<object> Read(object s);
+        /// <summary>
+        /// Gets the parameter.
+        /// </summary>
+        /// <value>The parameter.</value>
+        (string key, string name) Param { get; }
     }
 }

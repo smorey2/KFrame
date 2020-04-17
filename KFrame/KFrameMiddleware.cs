@@ -25,12 +25,12 @@ namespace KFrame
         /// <param name="next">The next.</param>
         /// <param name="options">The options.</param>
         /// <param name="cache">The cache.</param>
-        public KFrameMiddleware(RequestDelegate next, KFrameOptions options, IMemoryCache cache)
+        public KFrameMiddleware(RequestDelegate next, KFrameOptions options, IMemoryCache cache, IKFrameSource[] sources)
         {
             _next = next;
             _options = options;
             _cache = cache;
-            _repository = new KFrameRepository(_cache, _options, new Assembly[] { });
+            _repository = new KFrameRepository(_cache, _options, sources);
         }
 
         /// <summary>
@@ -40,64 +40,79 @@ namespace KFrame
         /// <returns>Task.</returns>
         public async Task InvokeAsync(HttpContext context)
         {
-            var req = context.Request;
-            var res = context.Response;
+            var req = context.Request; var res = context.Response;
             if (req.Path.StartsWithSegments(_options.RequestPath, StringComparison.OrdinalIgnoreCase, out var remaining))
             {
-                if (remaining.StartsWithSegments("/k", StringComparison.OrdinalIgnoreCase)) await KFrameAsync(req, res);
-                else if (remaining.StartsWithSegments("/i", StringComparison.OrdinalIgnoreCase, out var kframe)) await IFrameAsync(req, res, kframe);
-                else if (remaining.StartsWithSegments("/dbinstall", StringComparison.OrdinalIgnoreCase)) await DbInstallAsync(req, res);
-                else if (remaining.StartsWithSegments("/dbuninstall", StringComparison.OrdinalIgnoreCase)) await DbUninstallAsync(req, res);
-                else if (remaining.StartsWithSegments("/kvinstall", StringComparison.OrdinalIgnoreCase)) await KvInstallAsync(req, res);
-                else if (remaining.StartsWithSegments("/kvuninstall", StringComparison.OrdinalIgnoreCase)) await KvUninstallAsync(req, res);
+                if (remaining.StartsWithSegments("/i", StringComparison.OrdinalIgnoreCase, out var remaining2)) await IFrameAsync(req, res, remaining2);
+                else if (remaining.StartsWithSegments("/p", StringComparison.OrdinalIgnoreCase, out remaining2)) await PFrameAsync(req, res, remaining2);
+                else if (remaining.StartsWithSegments("/clear", StringComparison.OrdinalIgnoreCase, out remaining2)) await ClearAsync(req, res, remaining2);
+                else if (remaining.StartsWithSegments("/install", StringComparison.OrdinalIgnoreCase, out remaining2)) await InstallAsync(req, res, remaining2);
+                else if (remaining.StartsWithSegments("/uninstall", StringComparison.OrdinalIgnoreCase, out remaining2)) await UninstallAsync(req, res, remaining2);
+                else if (remaining.StartsWithSegments("/reinstall", StringComparison.OrdinalIgnoreCase, out remaining2)) await ReinstallAsync(req, res, remaining2);
                 else await _next(context);
                 return;
             }
             await _next(context);
         }
 
-        async Task KFrameAsync(HttpRequest req, HttpResponse res)
+        async Task IFrameAsync(HttpRequest req, HttpResponse res, string remaining)
         {
             res.Clear();
-            var r = await _repository.GetKFrameAsync();
-            res.StatusCode = (int)HttpStatusCode.OK;
-            res.Headers.Add("Access-Control-Allow-Origin", "*");
-            res.ContentType = "application/json";
-            var typedHeaders = res.GetTypedHeaders();
-            typedHeaders.CacheControl = new CacheControlHeaderValue { Public = true, MaxAge = DateTime.Today.AddDays(1) - DateTime.Now };
-            typedHeaders.Expires = DateTime.Today.ToUniversalTime().AddDays(1);
-            var json = JsonConvert.SerializeObject((object)r);
-            await res.WriteAsync(json);
-        }
-
-        async Task IFrameAsync(HttpRequest req, HttpResponse res, PathString kframe)
-        {
-            if (kframe == null || !long.TryParse(kframe, out var kframeAsLong))
-                kframeAsLong = 0;
-            res.Clear();
-            var firstEtag = req.Headers["If-None-Match"];
-            if (!string.IsNullOrEmpty(firstEtag) && _repository.HasIFrame(firstEtag))
+            var etag = req.Headers["If-None-Match"];
+            if (!string.IsNullOrEmpty(etag) && etag == "\"iframe\"")
             {
                 res.StatusCode = (int)HttpStatusCode.NotModified;
                 return;
             }
-            var r = await _repository.GetIFrameAsync(kframeAsLong);
+            var result = await _repository.GetIFrameAsync();
+            res.StatusCode = (int)HttpStatusCode.OK;
+            res.Headers.Add("Access-Control-Allow-Origin", "*");
+            res.ContentType = "application/json";
+            var typedHeaders = res.GetTypedHeaders();
+            typedHeaders.CacheControl = new CacheControlHeaderValue { Public = true, MaxAge = KFrameTiming.IFrameCacheMaxAge() };
+            typedHeaders.Expires = KFrameTiming.IFrameCacheExpires();
+            typedHeaders.ETag = new EntityTagHeaderValue("\"iframe\"");
+            var json = JsonConvert.SerializeObject((object)result);
+            await res.WriteAsync(json);
+        }
+
+        async Task PFrameAsync(HttpRequest req, HttpResponse res, string remaining)
+        {
+            res.Clear();
+            if (string.IsNullOrEmpty(remaining) || remaining[0] != '/')
+            {
+                res.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+            if (!long.TryParse(remaining.Substring(1), out var iframe))
+            {
+                res.StatusCode = (int)HttpStatusCode.NotFound;
+                return;
+            }
+            var etag = req.Headers["If-None-Match"];
+            if (!string.IsNullOrEmpty(etag) && _repository.HasPFrame(etag))
+            {
+                res.StatusCode = (int)HttpStatusCode.NotModified;
+                return;
+            }
+            var result = await _repository.GetPFrameAsync(iframe);
             res.StatusCode = (int)HttpStatusCode.OK;
             res.ContentType = "application/json";
             res.Headers.Add("Access-Control-Allow-Origin", "*");
             var typedHeaders = res.GetTypedHeaders();
-            typedHeaders.CacheControl = new CacheControlHeaderValue { Private = true };
-            typedHeaders.ETag = new EntityTagHeaderValue(r.ETag);
-            var json = JsonConvert.SerializeObject(r.Result);
+            typedHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true };
+            //typedHeaders.Expires = DateTime.Today.ToUniversalTime().AddDays(1);
+            typedHeaders.ETag = new EntityTagHeaderValue(result.ETag);
+            var json = JsonConvert.SerializeObject(result.Result);
             await res.WriteAsync(json);
         }
 
-        async Task DbInstallAsync(HttpRequest req, HttpResponse res) => await res.WriteAsync(await _repository.KvInstallAsync());
+        async Task ClearAsync(HttpRequest req, HttpResponse res, string remaining) => await res.WriteAsync(await _repository.ClearAsync(remaining));
 
-        async Task DbUninstallAsync(HttpRequest req, HttpResponse res) => await res.WriteAsync(await _repository.KvUninstallAsync());
+        async Task InstallAsync(HttpRequest req, HttpResponse res, string remaining) => await res.WriteAsync(await _repository.InstallAsync(remaining));
 
-        async Task KvInstallAsync(HttpRequest req, HttpResponse res) => await res.WriteAsync(await _repository.KvInstallAsync());
+        async Task UninstallAsync(HttpRequest req, HttpResponse res, string remaining) => await res.WriteAsync(await _repository.UninstallAsync(remaining));
 
-        async Task KvUninstallAsync(HttpRequest req, HttpResponse res) => await res.WriteAsync(await _repository.KvUninstallAsync());
+        async Task ReinstallAsync(HttpRequest req, HttpResponse res, string remaining) => await res.WriteAsync(await _repository.ReinstallAsync(remaining));
     }
 }

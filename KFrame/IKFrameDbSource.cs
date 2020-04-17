@@ -6,11 +6,11 @@ using System.Collections.Generic;
 namespace KFrame
 {
     /// <summary>
-    /// Interface IReferenceDbSource
-    /// Implements the <see cref="KFrame.IReferenceSource" />
+    /// Interface IKFrameDbSource
+    /// Implements the <see cref="KFrame.IKFrameSource" />
     /// </summary>
-    /// <seealso cref="KFrame.IReferenceSource" />
-    public interface IReferenceDbSource : IReferenceSource
+    /// <seealso cref="KFrame.IKFrameSource" />
+    public interface IKFrameDbSource : IKFrameSource
     {
         /// <summary>
         /// Gets the table.
@@ -21,7 +21,7 @@ namespace KFrame
         /// Gets the build.
         /// </summary>
         /// <value>The build.</value>
-        (Func<string, string> key, Func<Reference.X, string> max, Func<Reference.X, string> body) Build { get; }
+        (Func<string, string> key, Func<Source.X, string> max, Func<Source.X, string> body) Build { get; }
         /// <summary>
         /// Reads the specified s.
         /// </summary>

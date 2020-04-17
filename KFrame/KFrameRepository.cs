@@ -1,13 +1,10 @@
-﻿using Contoso.Data.Services;
-using Dapper;
-using KFrame.Sources;
-using Microsoft.Extensions.Caching.Memory;
+﻿using Microsoft.Extensions.Caching.Memory;
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Dynamic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace KFrame
@@ -18,42 +15,46 @@ namespace KFrame
     public interface IKFrameRepository
     {
         /// <summary>
-        /// Databases the install asynchronous.
+        /// Installs the asynchronous.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        Task<string> DbInstallAsync();
+        Task<string> ClearAsync(string accessCode);
         /// <summary>
-        /// Databases the uninstall asynchronous.
+        /// Installs the asynchronous.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        Task<string> DbUninstallAsync();
+        Task<string> InstallAsync(string accessCode);
         /// <summary>
-        /// Kvs the install asynchronous.
+        /// Uninstalls the asynchronous.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        Task<string> KvInstallAsync();
+        Task<string> UninstallAsync(string accessCode);
         /// <summary>
-        /// Kvs the uninstall asynchronous.
+        /// Reinstalls the asynchronous.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        Task<string> KvUninstallAsync();
-        /// <summary>
-        /// Gets the k frame asynchronous.
-        /// </summary>
-        /// <returns>Task&lt;System.Object&gt;.</returns>
-        Task<object> GetKFrameAsync();
+        Task<string> ReinstallAsync(string accessCode);
         /// <summary>
         /// Gets the i frame asynchronous.
         /// </summary>
-        /// <param name="kframe">The kframe.</param>
+        /// <returns>Task&lt;System.Object&gt;.</returns>
+        Task<object> GetIFrameAsync();
+        /// <summary>
+        /// Gets the p frame asynchronous.
+        /// </summary>
+        /// <param name="iframe">The iframe.</param>
         /// <returns>Task&lt;MemoryCacheResult&gt;.</returns>
-        Task<MemoryCacheResult> GetIFrameAsync(long kframe);
+        Task<MemoryCacheResult> GetPFrameAsync(long iframe);
         /// <summary>
         /// Determines whether [has i frame] [the specified etag].
         /// </summary>
         /// <param name="etag">The etag.</param>
         /// <returns><c>true</c> if [has i frame] [the specified etag]; otherwise, <c>false</c>.</returns>
-        bool HasIFrame(string etag);
+        bool HasPFrame(string etag);
     }
 
     /// <summary>
@@ -64,6 +65,8 @@ namespace KFrame
     public class KFrameRepository : IKFrameRepository
     {
         readonly IMemoryCache _cache;
+        IKFrameSource[] _sources;
+        List<KFrameNode> _nodes;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="KFrameRepository" /> class.
@@ -79,11 +82,11 @@ namespace KFrame
         /// <param name="cache">The cache.</param>
         /// <param name="options">The options.</param>
         /// <param name="sources">The sources.</param>
-        public KFrameRepository(IMemoryCache cache, KFrameOptions options, IReferenceSource[] sources)
+        public KFrameRepository(IMemoryCache cache, KFrameOptions options, IKFrameSource[] sources)
         {
-            _cache = cache;
-            Options = options;
-            Sources = sources;
+            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+            Options = options ?? throw new ArgumentNullException(nameof(options));
+            Sources = sources ?? throw new ArgumentNullException(nameof(sources));
         }
 
         #region Cache
@@ -93,74 +96,61 @@ namespace KFrame
         /// Implements the <see cref="KFrame.KFrameRepository.IKey" />
         /// </summary>
         /// <seealso cref="KFrame.KFrameRepository.IKey" />
-        public class _del_ : Reference.IKey
+        public class _del_ : Source.IKey
         {
-            public string id { get; set; }
+            public object id { get; set; }
             public string t { get; set; }
         }
 
-        readonly static MemoryCacheRegistration KFrame = new MemoryCacheRegistration(nameof(KFrame), new MemoryCacheEntryOptions
+        readonly static MemoryCacheRegistration IFrame = new MemoryCacheRegistration(nameof(IFrame), new MemoryCacheEntryOptions
         {
-            AbsoluteExpiration = DateTime.Today.AddDays(1),
+            AbsoluteExpiration = KFrameTiming.IFrameAbsoluteExpiration(),
         }, async (tag, values) =>
         {
             var parent = (KFrameRepository)tag;
-            // db-source
-            var dbSources = parent.Sources.OfType<IReferenceDbSource>().ToArray();
-            if (dbSources.Length > 0)
-            {
-                var dbSource = parent.Options.DbSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.DbSource)} not set");
-                return await dbSource.GetKFrameAsync(dbSources);
-            }
-            // kv-source
-            var kvSources = parent.Sources.OfType<IReferenceKvSource>().ToArray();
-            if (kvSources.Length > 0)
-            {
-                var kvSource = parent.Options.KvSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.KvSource)} not set");
-                return await kvSource.GetKFrameAsync(kvSources);
-            }
-            // none found
-            throw new InvalidOperationException($"IReferenceSource(s) not found");
-        }, "#KFrame");
+            var results = new List<object>();
+            foreach (var node in parent.Nodes)
+                results.Add(await node.Source.GetIFrameAsync(node.Chapter, node.FrameSources));
+            return results;
+        }, "KFrame");
 
-        readonly static MemoryCacheRegistration IFrame = new MemoryCacheRegistration(nameof(IFrame), AddRemovedCallback(new MemoryCacheEntryOptions
+        readonly static MemoryCacheRegistration PFrame = new MemoryCacheRegistration(nameof(PFrame), AddRemovedCallback(new MemoryCacheEntryOptions
         {
-            AbsoluteExpiration = DateTime.Now.AddMinutes(1),
+            AbsoluteExpiration = KFrameTiming.PFrameAbsoluteExpiration(),
         }), async (tag, values) =>
         {
             var parent = (KFrameRepository)tag;
-            var kframe = new DateTime((long)values[0]);
-            // db-source
-            var dbSources = parent.Sources.OfType<IReferenceDbSource>().ToArray();
-            if (dbSources.Length > 0)
+            var iframe = new DateTime((long)values[0]);
+            var results = new List<object>();
+            var checks = new Queue<Check>();
+            var etags = new List<string>();
+            foreach (var node in parent.Nodes)
             {
-                var dbSource = parent.Options.DbSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.DbSource)} not set");
-                return await dbSource.GetIFrameAsync(dbSources, kframe, true);
+                var (data, check, etag) = await node.Source.GetPFrameAsync(node.Chapter, node.FrameSources, iframe, true);
+                results.Add(data);
+                checks.Enqueue(check);
+                etags.Add(etag);
             }
-            // kv-source
-            var kvSources = parent.Sources.OfType<IReferenceKvSource>().ToArray();
-            if (kvSources.Length > 0)
+            return new MemoryCacheResult(results.ToArray())
             {
-                var kvSource = parent.Options.KvSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.KvSource)} not set");
-                return await kvSource.GetIFrameAsync(kvSources, kframe, true);
-            }
-            // none found
-            throw new InvalidOperationException($"IReferenceSource(s) not found");
-        }, "#KFrame");
+                Tag = checks,
+                ETag = etags.Count != 0 ? $"\"{string.Join(" ", etags)}\"" : null,
+            };
+        }, "KFrame");
 
         /// <summary>
-        /// Struct TagCheck
+        /// Class Check.
         /// </summary>
-        public struct TagCheck
+        public class Check
         {
-            public DateTime KFrame;
+            public DateTime IFrame;
             public int[] Keys;
             public DateTime MaxDate;
 
-            public override bool Equals(object obj) => obj is TagCheck b ? Keys.SequenceEqual(b.Keys) && MaxDate == b.MaxDate : false;
-            public override int GetHashCode() => KFrame.GetHashCode() ^ Keys.GetHashCode() ^ MaxDate.GetHashCode();
-            public static bool operator ==(TagCheck a, TagCheck b) => a.Equals(b);
-            public static bool operator !=(TagCheck a, TagCheck b) => !a.Equals(b);
+            public override bool Equals(object obj) => obj is Check b ? Keys.SequenceEqual(b.Keys) && MaxDate == b.MaxDate : false;
+            public override int GetHashCode() => IFrame.GetHashCode() ^ Keys.GetHashCode() ^ MaxDate.GetHashCode();
+            public static bool operator ==(Check a, Check b) => a.Equals(b);
+            public static bool operator !=(Check a, Check b) => !a.Equals(b);
         }
 
         static MemoryCacheEntryOptions AddRemovedCallback(MemoryCacheEntryOptions options)
@@ -171,27 +161,15 @@ namespace KFrame
                 var result = value as MemoryCacheResult;
                 if (parent == null || result == null || result.Tag == null)
                     return;
-                var tagCheck = (TagCheck)result.Tag;
-                // db-source
-                var dbSources = parent.Sources.OfType<IReferenceDbSource>().ToArray();
-                if (dbSources.Length > 0)
+                var checks = (Queue<Check>)result.Tag;
+                foreach (var node in parent.Nodes)
                 {
-                    var dbSource = parent.Options.DbSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.DbSource)} not set");
-                    var tagCheck2 = (TagCheck)(await dbSource.GetIFrameAsync(dbSources, tagCheck.KFrame, false)).Tag;
-                    if (tagCheck == tagCheck2)
-                        parent._cache.Set(key, value, new MemoryCacheEntryOptions().SetAbsoluteExpiration(DateTime.Now.AddMinutes(1)));
-                    return;
+                    var check = checks.Dequeue();
+                    var (data2, check2, etag2) = await node.Source.GetPFrameAsync(node.Chapter, node.FrameSources, check.IFrame, false);
+                    if (check != check2)
+                        return;
                 }
-                // kv-source
-                var kvSources = parent.Sources.OfType<IReferenceKvSource>().ToArray();
-                if (kvSources.Length > 0)
-                {
-                    var kvSource = parent.Options.KvSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.KvSource)} not set");
-                    var tagCheck2 = (TagCheck)(await kvSource.GetIFrameAsync(kvSources, tagCheck.KFrame, false)).Tag;
-                    if (tagCheck == tagCheck2)
-                        parent._cache.Set(key, value, new MemoryCacheEntryOptions().SetAbsoluteExpiration(DateTime.Now.AddMinutes(1)));
-                    return;
-                }
+                parent._cache.Set(key, value, new MemoryCacheEntryOptions().SetAbsoluteExpiration(KFrameTiming.PFramePolling()));
             }, null);
             return options;
         }
@@ -199,23 +177,23 @@ namespace KFrame
         readonly static MemoryCacheRegistration MergedFrame = new MemoryCacheRegistration(nameof(MergedFrame), 10, (tag, values) =>
         {
             var parent = (KFrameRepository)tag;
-            var kframe = (IDictionary<string, object>)parent._cache.Get<dynamic>(KFrame, parent);
-            var iframe = (IDictionary<string, object>)parent._cache.GetResult(IFrame, parent, (long)kframe["frame"]).Result;
-            var idels = (List<_del_>)iframe["del"];
+            var iframe = (IDictionary<string, object>)parent._cache.Get<dynamic>(IFrame, parent);
+            var pframe = (IDictionary<string, object>)parent._cache.GetResult(PFrame, parent, (long)iframe["frame"]).Result;
+            var dels = (List<_del_>)pframe["del"];
             var result = (IDictionary<string, object>)new ExpandoObject();
             foreach (var source in parent.Sources)
             {
-                var kps = ((IEnumerable<object>)kframe[source.Param.key]).Cast<Reference.IKey>().ToList();
-                var ips = ((IEnumerable<object>)iframe[source.Param.key]).Cast<Reference.IKey>().ToList();
+                var kps = ((IEnumerable<object>)iframe[source.Param.key]).Cast<Source.IKey>().ToList();
+                var ips = ((IEnumerable<object>)pframe[source.Param.key]).Cast<Source.IKey>().ToList();
                 if (kps.Count == 0 && ips.Count == 0)
                     continue;
-                var ipsdelsById = idels.Where(x => x.t == source.Param.key).ToDictionary(x => x.id);
+                var ipsdelsById = dels.Where(x => x.t == source.Param.key).ToDictionary(x => x.id);
                 var ipsById = ips.ToDictionary(x => x.id);
                 var p = kps.Where(x => !ipsdelsById.ContainsKey(x.id) && !ipsById.ContainsKey(x.id)).Union(ips).ToList();
                 result.Add(source.Param.key, p.ToDictionary(x => x.id));
             }
             return (dynamic)result;
-        }, "#KFrame");
+        }, "KFrame");
 
         #endregion
 
@@ -223,7 +201,40 @@ namespace KFrame
         /// Gets or sets the sources.
         /// </summary>
         /// <value>The sources.</value>
-        public IReferenceSource[] Sources { get; set; }
+        public IKFrameSource[] Sources
+        {
+            get => _sources;
+            set
+            {
+                _sources = value ?? throw new ArgumentNullException(nameof(value));
+                _nodes = null;
+            }
+        }
+
+        List<KFrameNode> Nodes
+        {
+            get
+            {
+                if (_nodes != null)
+                    return _nodes;
+                var nodes = new List<KFrameNode>();
+                // db-source
+                var dbFrameSources = Sources.OfType<IKFrameDbSource>().ToArray();
+                if (dbFrameSources.Length > 0)
+                {
+                    var dbSource = Options.DbSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.DbSource)} not set");
+                    nodes.Add(new KFrameNode(dbSource, dbFrameSources));
+                }
+                // kv-source
+                var kvFrameSources = Sources.OfType<IKFrameKvSource>().ToArray();
+                if (kvFrameSources.Length > 0)
+                {
+                    var kvSource = Options.KvSource ?? throw new InvalidOperationException($"{nameof(KFrameOptions.KvSource)} not set");
+                    nodes.Add(new KFrameNode(kvSource, kvFrameSources));
+                }
+                return _nodes = nodes;
+            }
+        }
 
         /// <summary>
         /// Gets or sets the options.
@@ -231,49 +242,101 @@ namespace KFrame
         /// <value>The options.</value>
         public KFrameOptions Options { get; set; }
 
-        /// <summary>
-        /// database install as an asynchronous operation.
-        /// </summary>
-        /// <returns>Task&lt;System.String&gt;.</returns>
-        public async Task<string> DbInstallAsync() => await Options.DbSource.DbInstallAsync(Sources.OfType<IReferenceDbSource>().ToArray());
+        bool ValidAccessCode(string accessCode, out string message)
+        {
+            if (!string.IsNullOrEmpty(Options.AccessToken) && $"/{Options.AccessToken}" != accessCode)
+            {
+                message = "Invalid Access Token";
+                return false;
+            }
+            message = null;
+            return true;
+        }
 
         /// <summary>
-        /// database uninstall as an asynchronous operation.
+        /// clear as an asynchronous operation.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        public async Task<string> DbUninstallAsync() => await Options.DbSource.DbUninstallAsync(Sources.OfType<IReferenceDbSource>().ToArray());
+        public async Task<string> ClearAsync(string accessCode)
+        {
+            if (!ValidAccessCode(accessCode, out var message))
+                return message;
+            var b = new StringBuilder();
+            //foreach (var node in Nodes)
+            //    b.Append(await node.Source.ClearAsync(node.Chapter, node.FrameSources));
+            _cache.Touch("KFrame");
+            return b.ToString();
+        }
 
         /// <summary>
-        /// kv install as an asynchronous operation.
+        /// install as an asynchronous operation.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        public async Task<string> KvInstallAsync() => await Options.KvSource.KvInstallAsync(Sources.OfType<IReferenceKvSource>().ToArray());
+        /// <exception cref="System.InvalidOperationException"></exception>
+        /// <exception cref="System.InvalidOperationException"></exception>
+        public async Task<string> InstallAsync(string accessCode)
+        {
+            if (!ValidAccessCode(accessCode, out var message))
+                return message;
+            var b = new StringBuilder();
+            foreach (var node in Nodes)
+                b.Append(await node.Source.InstallAsync(node.Chapter, node.FrameSources));
+            return b.ToString();
+        }
 
         /// <summary>
-        /// kv uninstall as an asynchronous operation.
+        /// uninstall as an asynchronous operation.
         /// </summary>
+        /// <param name="accessCode">The access code.</param>
         /// <returns>Task&lt;System.String&gt;.</returns>
-        public async Task<string> KvUninstallAsync() => await Options.KvSource.KvUninstallAsync(Sources.OfType<IReferenceKvSource>().ToArray());
+        /// <exception cref="System.InvalidOperationException"></exception>
+        /// <exception cref="System.InvalidOperationException"></exception>
+        public async Task<string> UninstallAsync(string accessCode)
+        {
+            if (!ValidAccessCode(accessCode, out var message))
+                return message;
+            var b = new StringBuilder();
+            foreach (var node in Nodes)
+                b.Append(await node.Source.UninstallAsync(node.Chapter, node.FrameSources));
+            return b.ToString();
+        }
 
         /// <summary>
-        /// get k frame as an asynchronous operation.
+        /// reinstall as an asynchronous operation.
         /// </summary>
-        /// <returns>Task&lt;dynamic&gt;.</returns>
-        public async Task<dynamic> GetKFrameAsync() => await _cache.GetAsync<dynamic>(KFrame, this);
+        /// <param name="accessCode">The access code.</param>
+        /// <returns>Task&lt;System.String&gt;.</returns>
+        public async Task<string> ReinstallAsync(string accessCode)
+        {
+            if (!ValidAccessCode(accessCode, out var message))
+                return message;
+            var b = new StringBuilder();
+            b.Append(await UninstallAsync(accessCode));
+            b.Append(await InstallAsync(accessCode));
+            return b.ToString();
+        }
 
         /// <summary>
         /// get i frame as an asynchronous operation.
         /// </summary>
-        /// <param name="kframe">The kframe.</param>
-        /// <returns>Task&lt;MemoryCacheResult&gt;.</returns>
-        public async Task<MemoryCacheResult> GetIFrameAsync(long kframe) => await _cache.GetResultAsync(IFrame, this, kframe);
+        /// <returns>Task&lt;dynamic&gt;.</returns>
+        public async Task<dynamic> GetIFrameAsync() => await _cache.GetAsync<dynamic>(IFrame, this);
 
         /// <summary>
-        /// Determines whether [has i frame] [the specified etag].
+        /// get p frame as an asynchronous operation.
+        /// </summary>
+        /// <param name="iframe">The kframe.</param>
+        /// <returns>Task&lt;MemoryCacheResult&gt;.</returns>
+        public async Task<MemoryCacheResult> GetPFrameAsync(long iframe) => await _cache.GetResultAsync(PFrame, this, iframe);
+
+        /// <summary>
+        /// Determines whether [has p frame] [the specified etag].
         /// </summary>
         /// <param name="etag">The etag.</param>
-        /// <returns><c>true</c> if [has i frame] [the specified etag]; otherwise, <c>false</c>.</returns>
-        public bool HasIFrame(string etag) => _cache.Contains(IFrame, etag);
+        /// <returns><c>true</c> if [has p frame] [the specified etag]; otherwise, <c>false</c>.</returns>
+        public bool HasPFrame(string etag) => _cache.Contains(PFrame, etag);
 
         /// <summary>
         /// get merged frame as an asynchronous operation.
@@ -287,9 +350,9 @@ namespace KFrame
         /// <param name="assemblysToScan">The assemblys to scan.</param>
         /// <param name="condition">The condition.</param>
         /// <returns>IReferenceSource[].</returns>
-        public static IReferenceSource[] FindSourcesFromAssembly(IEnumerable<Assembly> assemblysToScan, Predicate<Type> condition) =>
+        public static IKFrameSource[] FindSourcesFromAssembly(IEnumerable<Assembly> assemblysToScan, Predicate<Type> condition) =>
             assemblysToScan.SelectMany(a => a.GetTypes().Where(t => condition(t))
-                .Select(t => (IReferenceSource)Activator.CreateInstance(t))).ToArray();
+                .Select(t => (IKFrameSource)Activator.CreateInstance(t))).ToArray();
 
         /// <summary>
         /// Finds the sources from assembly.
@@ -297,7 +360,7 @@ namespace KFrame
         /// <param name="assemblysToScan">The assemblys to scan.</param>
         /// <param name="excludes">The excludes.</param>
         /// <returns>IReferenceSource[].</returns>
-        public static IReferenceSource[] FindSourcesFromAssembly(IEnumerable<Assembly> assemblysToScan, params Type[] excludes) =>
-            FindSourcesFromAssembly(assemblysToScan, x => !x.IsAbstract && !x.IsInterface && typeof(IReferenceSource).IsAssignableFrom(x) && !excludes.Contains(x));
+        public static IKFrameSource[] FindSourcesFromAssembly(IEnumerable<Assembly> assemblysToScan, params Type[] excludes) =>
+            FindSourcesFromAssembly(assemblysToScan, x => !x.IsAbstract && !x.IsInterface && typeof(IKFrameSource).IsAssignableFrom(x) && !excludes.Contains(x));
     }
 }

@@ -21,7 +21,8 @@ namespace KFrame
         {
             if (app == null)
                 throw new ArgumentNullException(nameof(app));
-            return app.UseMiddleware<KFrameMiddleware>(new KFrameOptions { });
+            var sources = KFrameRepository.FindSourcesFromAssembly(assemblys);
+            return app.UseMiddleware<KFrameMiddleware>(new KFrameOptions { }, sources);
         }
 
         /// <summary>
@@ -36,10 +37,11 @@ namespace KFrame
         {
             if (app == null)
                 throw new ArgumentNullException(nameof(app));
+            var sources = KFrameRepository.FindSourcesFromAssembly(assemblys);
             return app.UseMiddleware<KFrameMiddleware>(new KFrameOptions
             {
                 RequestPath = new PathString(requestPath)
-            });
+            }, sources);
         }
 
         /// <summary>
@@ -57,7 +59,8 @@ namespace KFrame
                 throw new ArgumentNullException(nameof(app));
             if (options == null)
                 throw new ArgumentNullException(nameof(options));
-            return app.UseMiddleware<KFrameMiddleware>(options);
+            var sources = KFrameRepository.FindSourcesFromAssembly(assemblys);
+            return app.UseMiddleware<KFrameMiddleware>(options, sources);
         }
 
         /// <summary>
@@ -77,7 +80,8 @@ namespace KFrame
             if (options == null)
                 throw new ArgumentNullException(nameof(options));
             options.RequestPath = requestPath;
-            return app.UseMiddleware<KFrameMiddleware>(options);
+            var sources = KFrameRepository.FindSourcesFromAssembly(assemblys);
+            return app.UseMiddleware<KFrameMiddleware>(options, sources);
         }
     }
 }

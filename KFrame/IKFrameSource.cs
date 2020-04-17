@@ -1,10 +1,11 @@
 ﻿namespace KFrame
 {
     /// <summary>
-    /// Interface IReferenceSource
+    /// Interface IKFrameSource
     /// </summary>
-    public interface IReferenceSource
+    public interface IKFrameSource
     {
+        IKFrameChapter Chapter { get; }
         /// <summary>
         /// Gets the parameter.
         /// </summary>

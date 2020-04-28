@@ -6,17 +6,15 @@
 
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.0.35" />
-    <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.2.2" />
+    <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" Version="2.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.Http.Extensions" Version="2.2.0" />
     <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.Caching.SqlServer" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="2.2.0" />
-    <PackageReference Include="System.Data.SqlClient" Version="4.7.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\darwin3.core\src\DARWIN.Core\DARWIN.Core.csproj" />
+    <ProjectReference Include="..\..\darwin3.core\src\Contoso.Extensions.Caching\Contoso.Extensions.Caching.csproj" />
+    <ProjectReference Include="..\..\darwin3.core\src\Contoso.Extensions.Data\Contoso.Extensions.Data.csproj" />
   </ItemGroup>
 
 </Project>
